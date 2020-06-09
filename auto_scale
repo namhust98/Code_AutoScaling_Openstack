@@ -1,0 +1,84 @@
+#!/bin/sh
+. demo-openrc
+openstack server list -f json > data_server.json
+
+while true
+do
+	./query_prometheus | python -m json.tool > data_prometheus.json
+	data_query=`jq '.[].result' data_prometheus.json`
+	echo $data_query | python -m json.tool > data_prometheus.json
+	data_length=`jq 'length' data_prometheus.json`
+	
+	function scanServer()
+	{
+		num=$1
+		string=$2
+		num=.[$num]
+		data_server=`jq $num.Networks data_server.json`
+		echo $data_server | cut -d'"' -f2 | cut -d'=' -f2 > ip_instance.json
+		ip_instance=`cat ip_instance.json`
+		if [[ $string = $ip_instance ]]
+		then
+			id_instance=`jq $num.ID data_server.json`
+			. demo-openrc
+			openstack server stop $id_instance
+			echo "We will shutdown instance $id_instance"
+			sleep 120
+		fi
+	}
+	
+	function getDataMetric()
+	{
+		num=$1
+		num=.[$num]
+		data_metric=`jq $num data_prometheus.json`
+		echo $data_metric > metric.json
+		data_metric=`jq '.[]' metric.json`
+		echo $data_metric | cut -d'[' -f2 | cut -d'"' -f2 > time_metric.json
+		cpu=`cat time_metric.json | cut -d'.' -f1`
+		cpu=`expr $cpu + 1`
+		if [[ $cpu -gt 80 ]]
+		then
+			echo "We will add a new instance"
+			. demo-openrc
+			openstack server create --flavor instance --user-data script_config_instance --image instance-sample --nic net-id=ddb15328-15ca-4ed1-8313-a16c2187cd60 --security-group default --key-name mykey instance
+			openstack floating ip create provider -f json > floatingip.json
+			ip=`jq '.floating_ip_address' floatingip.json`
+			echo $ip | cut -d'"' -f2 > floatingip.json
+			ipfloat=`cat floatingip.json`
+			openstack server add floating ip instance $ipfloat
+			sleep 120
+		fi
+		if [[ $cpu -lt 20 ]]
+		then
+			data_metric=`jq '.[]' metric.json`
+			echo $data_metric | cut -d ':' -f2 | cut -d '"' -f2 > ip_metric.json
+			. demo-openrc
+			openstack server list -f json > data_server.json
+			length_data=`jq 'length' data_server.json`
+			ip_metric=`cat ip_metric.json`
+			
+			i=0
+			while true
+			do
+			scanServer $i $ip_metric
+				i=`expr $i + 1`
+				if [[ $i -eq $length_data ]]
+				then
+					break
+				fi
+			done
+		fi
+	}
+	
+	i=0
+	while true
+	do
+		getDataMetric $i
+		i=`expr $i + 1`
+		if [[ $i -eq $data_length ]]
+		then
+			break
+		fi
+	done
+done

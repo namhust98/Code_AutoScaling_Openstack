@@ -1,0 +1,46 @@
+#!/bin/sh
+. demo-openrc
+openstack server list -f json > data_server.json
+
+while true
+do
+	./query_prometheus | python -m json.tool > data_prometheus.json
+	data_query=`jq '.[].result' data_prometheus.json`
+	echo $data_query | python -m json.tool > data_prometheus.json
+	data_length=`jq 'length' data_prometheus.json`
+	
+	function getDataMetric()
+	{
+		num=$1
+		num=.[$num]
+		data_metric=`jq $num data_prometheus.json`
+		echo $data_metric > metric.json
+		data_metric=`jq '.[]' metric.json`
+		echo $data_metric | cut -d'[' -f2 | cut -d'"' -f2 > time_metric.json
+		cpu=`cat time_metric.json | cut -d'.' -f1`
+		cpu=`expr $cpu + 1`
+		if [[ $cpu -gt 80 ]]
+		then
+			echo "We will add a new instance"
+			. demo-openrc
+			openstack server create --flavor instance --user-data script_config_instance --image instance-sample --nic net-id=ddb15328-15ca-4ed1-8313-a16c2187cd60 --security-group default --key-name mykey instance
+			openstack floating ip create provider -f json > floatingip.json
+			ip=`jq '.floating_ip_address' floatingip.json`
+			echo $ip | cut -d'"' -f2 > floatingip.json
+			ipfloat=`cat floatingip.json`
+			openstack server add floating ip instance $ipfloat
+			sleep 120
+		fi
+	}
+	
+	i=0
+	while true
+	do
+		getDataMetric $i
+		i=`expr $i + 1`
+		if [[ $i -eq $data_length ]]
+		then
+			break
+		fi
+	done
+done

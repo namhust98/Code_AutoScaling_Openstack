@@ -1,0 +1,2 @@
+#!/bin/sh
+curl http://192.168.0.112:9090/api/v1/query?query=%281-avg%28irate%28node_cpu_seconds_total%7Bmode%3D%22idle%22%7D%5B10s%5D%29%29%20by%20%28instance%29%29%2A100
